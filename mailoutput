@@ -1,0 +1,112 @@
+#!/usr/bin/env python
+#
+# Usage: mailoutput [Options] program [args ...]
+# 
+# Will execute "program [args ...]". Any generated output is emailed
+# to the invoking user or specified recipient (-r option) with an 
+# informative subject line containing the command line of the executed
+# program. If -c is given, output is only emailed if the exit status of
+# the program is non-zero.
+# 
+# Author: Shumon Huque <shuque@gmail.com>
+#
+
+import os, sys, socket, pwd, subprocess, getopt
+
+PROGNAME  = os.path.basename(sys.argv[0])
+VERSION   = "0.1"
+TAG = "[out]"
+HOST      = socket.gethostname()
+SENDMAIL  = ["/usr/lib/sendmail",  "-t"]
+RECIPIENT = pwd.getpwuid(os.getuid()).pw_name
+MAIL_ON_RC = False
+
+
+def usage():
+    """Print usage string and exit"""
+    print("""\
+Usage: {} [Options] program [args ..]
+
+       Options:
+       -c               mail only if return code not zero
+       -r email         email recipient
+       -t tag           tag to include in subject line
+""".format(PROGNAME))
+    sys.exit(1)
+
+
+def process_args(arguments):
+    """Process command line arguments"""
+    global MAIL_ON_RC, RECIPIENT, TAG
+    try:
+        (options, args) = getopt.getopt(sys.argv[1:], 'cr:t:')
+    except getopt.GetoptError:
+        usage()
+
+    if len(args) < 1:
+        usage()
+
+    for option, value in options:
+        if option == "-c":
+            MAIL_ON_RC = True
+        elif option == "-r":
+            RECIPIENT = value
+        elif option == "-t":
+            TAG = "[%s]" % value
+
+    return (args)
+
+
+def run_program(cmdline):
+    """Execute program in cmdline; Return exit code and output string"""
+    p = subprocess.Popen(cmdline,
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    output = p.communicate()[0]
+    output = output.decode()
+    return (p.returncode, output)
+
+
+def mail_to():
+    return "To: %s" % RECIPIENT
+
+
+def mail_subject(args):
+    first = os.path.basename(args[0])
+    rest = args[1:]
+    return "Subject: %s %s %s" % (TAG, first, " ".join(rest))
+
+
+def mail_body(cmdstring, rc, host, output):
+    return """\
+Program: {}
+Return code: {}
+On host : {}
+Generated the following output:
+
+{}
+""".format(cmdstring, rc, host, output)
+
+
+def send_mail(cmdline, rc, output):
+    INPUT = "%s\n%s\n\n%s" % \
+            (mail_subject(cmdline), 
+             mail_to(),
+             mail_body(cmdstring, rc, HOST, output))
+    try:
+        INPUT = bytes(INPUT)
+    except TypeError:
+        INPUT = bytes(INPUT, "UTF-8")
+    pipe = subprocess.Popen(SENDMAIL, stdin=subprocess.PIPE).stdin
+    pipe.write(INPUT)
+    pipe.close()
+    return
+
+
+if __name__ == '__main__':
+
+    cmdline = process_args(sys.argv[1:])
+    cmdstring = " ".join(cmdline)
+    rc, output = run_program(cmdline)
+
+    if (MAIL_ON_RC and rc != 0) or ((not MAIL_ON_RC) and output):
+        send_mail(cmdline, rc, output)
